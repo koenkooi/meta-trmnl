@@ -1,0 +1,214 @@
+From f5d7339afceb0545919e5d9694657d45049344aa Mon Sep 17 00:00:00 2001
+From: Koen Kooi <koen@dominion.thruhere.net>
+Date: Fri, 14 Aug 2026 06:46:15 +0200
+Subject: [PATCH] chromium-ozone-wayland: build-host portability fixes for
+ non-x86-64 hosts
+
+The official Chromium source tarball vendors several host build-tools
+as x86-64-only prebuilt binaries: devtools-frontend's own esbuild,
+rollup's native N-API addon, third_party/rust-toolchain's bindgen and
+rustfmt, and third_party/gperf's CIPD-fetched gperf. All of these run
+on BUILD_ARCH, not TARGET_ARCH, so they break do_compile on any
+non-x86-64 build host regardless of MACHINE. Substitute working
+equivalents: oe-core's bindgen-cli-native/gperf-native (genuinely
+build-host-arch-agnostic, work on any host), a cosmetic no-op stub for
+rustfmt (Chromium only uses it to pretty-print bindgen-generated glue),
+and prebuilt arm64 npm packages for esbuild/rollup specifically (the
+one piece that is genuinely aarch64-only today).
+
+Also includes the real fix for a genuine, separate upstream bug:
+media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc calls
+LOG(ERROR) but never includes base/logging.h directly -- it only ever
+picked it up transitively through the USE_VAAPI-gated vaapi_wrapper.h
+chain, so a use_v4l2_codec=true + use_vaapi=false build (this recipe's
+own default PACKAGECONFIG) still compiles that translation unit
+(media/gpu/sandbox/BUILD.gn's use_linux_video_acceleration is the OR
+of the two) with LOG undefined. Upstream-Status: Submitted, see the
+patch itself (chromium-review 8227693).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../chromium-ozone-wayland-angstrom-fixes.inc | 116 ++++++++++++++++++
+ ...dbox-Include-base-logging.h-directly.patch |  36 ++++++
+ .../chromium-ozone-wayland_150.0.7871.124.bb  |   1 +
+ 3 files changed, 153 insertions(+)
+ create mode 100644 meta-chromium/recipes-browser/chromium/chromium-ozone-wayland-angstrom-fixes.inc
+ create mode 100644 meta-chromium/recipes-browser/chromium/chromium-ozone-wayland/0001-media-gpu-sandbox-Include-base-logging.h-directly.patch
+
+diff --git a/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland-angstrom-fixes.inc b/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland-angstrom-fixes.inc
+new file mode 100644
+index 0000000..e6eb2e5
+--- /dev/null
++++ b/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland-angstrom-fixes.inc
+@@ -0,0 +1,116 @@
++FILESEXTRAPATHS:prepend := "${THISDIR}/chromium-ozone-wayland:"
++
++# media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc calls
++# LOG(ERROR) but never includes base/logging.h -- it only ever picked it up
++# transitively through the USE_VAAPI-gated vaapi_wrapper.h include chain.
++# media/gpu/sandbox/BUILD.gn still compiles the file when use_v4l2_codec is
++# on and use_vaapi is off (use_linux_video_acceleration is the OR of the
++# two), which is exactly chromium-gn.inc's default PACKAGECONFIG, so LOG is
++# not a macro there and clang reports a bare undeclared 'ERROR'. Genuine
++# upstream bug, not build-host-specific -- Upstream-Status: Submitted, see
++# the patch itself.
++SRC_URI += "file://0001-media-gpu-sandbox-Include-base-logging.h-directly.patch"
++
++# The official Chromium source tarball vendors several host build-tools as
++# x86-64-only binaries: devtools-frontend's own esbuild, rollup's native
++# N-API addon, third_party/rust-toolchain's bindgen and rustfmt, and
++# third_party/gperf's CIPD-fetched gperf. All of these run on BUILD_ARCH,
++# not TARGET_ARCH, so they break do_compile on any non-x86_64 build host
++# regardless of MACHINE -- this is not an aarch64 peculiarity, it is what
++# "vendored x86-64 binary" means on any other host. Gate every fix below on
++# "not x86_64", not "is aarch64": bindgen-cli-native, gperf-native and the
++# rustfmt no-op stub are genuinely build-host-arch-agnostic (oe-core builds
++# each for whatever BUILD_ARCH actually is), so there is nothing aarch64-
++# specific about them. The one real exception is the esbuild/rollup swap
++# just below, which substitutes prebuilt arm64 npm packages specifically --
++# that part only works on an aarch64 build host today; a non-x86_64,
++# non-aarch64 host would need its own matching npm package added, which
++# nothing here has needed yet. The two URLs below are always in SRC_URI
++# (fetched regardless of host, same as upstream's own x86-64 vendored
++# copies) -- only do_unpack:append's own use of them is host-gated.
++SRC_URI:append = " \
++    https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.25.1.tgz;name=esbuildarm64;unpack=false;subdir=npm-arm64 \
++    https://registry.npmjs.org/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-4.60.4.tgz;name=rolluparm64;unpack=false;subdir=npm-arm64 \
++"
++SRC_URI[esbuildarm64.sha256sum] = "70771c9212585cfd1b190465f92dae98d1d3fc4a4fab5cacbef71457ee08e254"
++SRC_URI[rolluparm64.sha256sum] = "7b98541552d3d679d4a92a04d590b34d1b44a6ec582483be9a66e8bdc31a06f6"
++
++# do_unpack is a python task in base.bbclass, so the append must be too.
++python do_unpack:append() {
++    import os, shutil, subprocess
++
++    if d.getVar('BUILD_ARCH') == 'x86_64':
++        return
++
++    npm_dir = os.path.join(d.getVar('UNPACKDIR'), 'npm-arm64')
++    esbuild_dir = os.path.join(npm_dir, 'esbuild-extract')
++    rollup_dir = os.path.join(npm_dir, 'rollup-extract')
++    bb.utils.mkdirhier(esbuild_dir)
++    bb.utils.mkdirhier(rollup_dir)
++    subprocess.run(['tar', 'xzf', os.path.join(npm_dir, 'linux-arm64-0.25.1.tgz'), '-C', esbuild_dir], check=True)
++    subprocess.run(['tar', 'xzf', os.path.join(npm_dir, 'rollup-linux-arm64-gnu-4.60.4.tgz'), '-C', rollup_dir], check=True)
++
++    s = d.getVar('S')
++    esbuild_dest = os.path.join(s, 'third_party/devtools-frontend/src/third_party/esbuild/esbuild')
++    rollup_dest_dir = os.path.join(s, 'third_party/devtools-frontend/src/node_modules/@rollup/rollup-linux-arm64-gnu')
++    bb.utils.mkdirhier(rollup_dest_dir)
++
++    shutil.copy(os.path.join(esbuild_dir, 'package/bin/esbuild'), esbuild_dest)
++    os.chmod(esbuild_dest, 0o755)
++    shutil.copy(os.path.join(rollup_dir, 'package/rollup.linux-arm64-gnu.node'), rollup_dest_dir)
++    shutil.copy(os.path.join(rollup_dir, 'package/package.json'), rollup_dest_dir)
++}
++
++# third_party/rust-toolchain/bin/bindgen is x86-64 too, and this one has no
++# npm equivalent -- oe-core's own bindgen-cli-native does the same job on
++# any build host. Same symlink-over-vendored-binary trick do_add_nodejs_symlink
++# already uses.
++DEPENDS:append = " ${@bb.utils.contains('BUILD_ARCH', 'x86_64', '', 'bindgen-cli-native', d)}"
++
++do_add_bindgen_symlink () {
++	if [ "${BUILD_ARCH}" = "x86_64" ]; then
++		exit 0
++	fi
++	bindgen_native_path="${STAGING_BINDIR_NATIVE}/bindgen"
++	if [ ! -f "$bindgen_native_path" ]; then
++		echo "$bindgen_native_path does not exist."
++		exit 1
++	fi
++	ln -sf "$bindgen_native_path" "${S}/third_party/rust-toolchain/bin/bindgen"
++}
++addtask add_bindgen_symlink after do_configure before do_compile
++
++# third_party/rust-toolchain/bin/rustfmt is x86-64 too. Unlike bindgen,
++# oe-core's rust-native do_install (rust_1.94.1.bb, class-native path)
++# never builds rustfmt at all -- only class-target/nativesdk do. Chromium
++# only runs it to pretty-print bindgen-generated glue (run_bindgen.py),
++# which is cosmetic, so a no-op stands in rather than pulling in a full
++# rust-native rebuild just to gain a formatter.
++do_add_rustfmt_stub () {
++	if [ "${BUILD_ARCH}" = "x86_64" ]; then
++		exit 0
++	fi
++	cat > ${S}/third_party/rust-toolchain/bin/rustfmt <<-'EOF'
++	#!/bin/sh
++	exit 0
++	EOF
++	chmod +x ${S}/third_party/rust-toolchain/bin/rustfmt
++}
++addtask add_rustfmt_stub after do_configure before do_compile
++
++# third_party/gperf/cipd/bin/gperf is x86-64 too (a CIPD-fetched tool the
++# plain source tarball still vendors prebuilt). gperf-native is already
++# a real DEPENDS above -- same symlink-over-vendored-binary trick again.
++do_add_gperf_symlink () {
++	if [ "${BUILD_ARCH}" = "x86_64" ]; then
++		exit 0
++	fi
++	gperf_native_path="${STAGING_BINDIR_NATIVE}/gperf"
++	if [ ! -f "$gperf_native_path" ]; then
++		echo "$gperf_native_path does not exist."
++		exit 1
++	fi
++	mkdir -p "${S}/third_party/gperf/cipd/bin"
++	ln -sf "$gperf_native_path" "${S}/third_party/gperf/cipd/bin/gperf"
++}
++addtask add_gperf_symlink after do_configure before do_compile
+diff --git a/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland/0001-media-gpu-sandbox-Include-base-logging.h-directly.patch b/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland/0001-media-gpu-sandbox-Include-base-logging.h-directly.patch
+new file mode 100644
+index 0000000..fa91171
+--- /dev/null
++++ b/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland/0001-media-gpu-sandbox-Include-base-logging.h-directly.patch
+@@ -0,0 +1,36 @@
++From cafbcf6d02a6cf1855987badd1a38fe80104e01c Mon Sep 17 00:00:00 2001
++From: Jason Perlow <jperlow@chromium.org>
++Date: Sat, 9 Aug 2026 00:00:00 +0000
++Subject: [PATCH] media/gpu/sandbox: Include base/logging.h directly
++
++hardware_video_decoding_sandbox_hook_linux.cc uses LOG(ERROR) but only
++ever got base/logging.h transitively, via the USE_VAAPI-gated include of
++media/gpu/vaapi/vaapi_wrapper.h (-> vaapi_status.h -> media/base/status.h
++-> base/logging.h). With use_v4l2_codec=true and use_vaapi=false the
++translation unit is still compiled (media/gpu/sandbox/BUILD.gn guards it
++with use_linux_video_acceleration = use_vaapi || use_v4l2_codec) but that
++include chain is gone, so LOG is not a macro and clang reports:
++
++  media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc:150:9:
++  error: use of undeclared identifier 'ERROR'
++
++The sibling hardware_video_encoding_sandbox_hook_linux.cc has the same
++LOG(ERROR) call and builds fine only because it carries a USE_V4L2_CODEC
++include that happens to reach base/logging.h.
++
++Upstream-Status: Submitted [https://chromium-review.googlesource.com/c/chromium/src/+/8227693]
++---
++ media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc | 1 +
++ 1 file changed, 1 insertion(+)
++
++diff --git a/media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc b/media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc
++--- a/media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc
+++++ b/media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.cc
++@@ -7,6 +7,7 @@
++ #include <dlfcn.h>
++ #include <sys/stat.h>
++ 
+++#include "base/logging.h"
++ #include "base/process/process_metrics.h"
++ #include "base/strings/stringprintf.h"
++ #include "build/build_config.h"
+diff --git a/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland_150.0.7871.124.bb b/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland_150.0.7871.124.bb
+index a7b9c4e..84e2316 100644
+--- a/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland_150.0.7871.124.bb
++++ b/meta-chromium/recipes-browser/chromium/chromium-ozone-wayland_150.0.7871.124.bb
+@@ -1,4 +1,5 @@
+ require chromium-gn.inc
++require chromium-ozone-wayland-angstrom-fixes.inc
+ 
+ REQUIRED_DISTRO_FEATURES = "wayland"
+ 
+-- 
+2.51.0
+

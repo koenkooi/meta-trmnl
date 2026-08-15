@@ -1,0 +1,105 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/siemens/kas/master/kas/schema-kas.json
+#
+# Genuinely standalone: bitbake + openembedded-core + meta-virtualization +
+# meta-trmnl itself, nothing from meta-angstrom -- this builds every image
+# in this layer, container and baremetal alike, not just a yocto-check-layer
+# pass. An earlier version of this file composed on top of meta-angstrom's
+# kas/angstrom.yml:kas/qemuarm64.yml, which is wrong (and broke
+# yocto-check-layer with "must belong to the same repository").
+#
+# distro: nodistro is oe-core's own bare baseline -- Angstrom's own distro
+# adds features (wayland among them) this layer has no dependency on beyond
+# the one REQUIRED_DISTRO_FEATURES chromium-ozone-wayland itself declares,
+# added explicitly below instead of pulling in Angstrom's whole distro.
+
+header:
+  version: 14
+
+machine: qemuarm64
+distro: nodistro
+
+# chromium-ozone-wayland (meta-browser, below) hard-requires this --
+# REQUIRED_DISTRO_FEATURES = "wayland" in its own recipe, confirmed by
+# reading it directly. nodistro does not turn this on by default; without
+# it the recipe is silently skipped and every image that RDEPENDS on it
+# (via chromium-terminus-config) fails to find a provider.
+local_conf_header:
+  wayland-for-chromium: |
+    DISTRO_FEATURES:append = " wayland"
+
+defaults:
+  repos:
+    branch: wrynose
+
+repos:
+  bitbake:
+    url: https://github.com/openembedded/bitbake
+    branch: "2.18"
+    layers:
+      .: disabled
+
+  openembedded-core:
+    url: https://github.com/openembedded/openembedded-core
+    layers:
+      meta:
+
+  meta-virtualization:
+    url: https://git.yoctoproject.org/git/meta-virtualization
+
+  # meta-rubygems (below) itself depends on openembedded-layer -- confirmed
+  # live via yocto-check-layer: "Layer meta-rubygems depends on
+  # openembedded-layer and isn't found." meta-virtualization's own
+  # layer.conf additionally depends on filesystems-layer, meta-python and
+  # networking-layer -- confirmed live via a real `bitbake` invocation
+  # ("Layer 'virtualization-layer' depends on layer '...', but this layer
+  # is not enabled"), not just yocto-check-layer's own (separately buggy)
+  # --dependency resolution. meta-webserver is nginx, for Inker's frontend
+  # container; not a hard layer.conf dependency of anything here, but a
+  # real RDEPENDS of inker-frontend-container.bb.
+  meta-openembedded:
+    url: https://github.com/openembedded/meta-openembedded
+    layers:
+      meta-oe:
+      meta-filesystems:
+      meta-python:
+      meta-networking:
+      meta-webserver:
+
+  # layer.conf's LAYERDEPENDS_trmnl-layer names this a hard dependency
+  # (Terminus's native-extension gems use rubygems.bbclass), so a
+  # genuinely standalone composition needs it too -- this file omitted
+  # it entirely until now. No branch: wrynose upstream (master has since
+  # drifted to LAYERSERIES_COMPAT "blacksail"); pinned to the last commit
+  # meta-rubygems' own README documents as still wrynose-compatible, same
+  # pin meta-angstrom uses. Not carrying meta-angstrom's own LIBPATHENV
+  # SIGBUS patch here: that works around an intermittent cross-gcc crash
+  # (see meta-angstrom's own project notes) that has not reproduced against
+  # any gem built through this file so far -- add it if one actually does.
+  meta-rubygems:
+    url: https://github.com/priv-kweihmann/meta-rubygems
+    branch: null
+    commit: dba6dfb9106584ce464d9d9c968f821b94b9a01f
+
+  # meta-clang: TOOLCHAIN = "clang" for chromium-ozone-wayland below, which
+  # needs a real clang, not gcc.
+  meta-clang:
+    url: https://github.com/kraj/meta-clang
+    branch: wrynose
+
+  # chromium-ozone-wayland, the target-arch headless Chromium Terminus's
+  # Ferrum needs to render device screens (see recipes-trmnl/chromium).
+  # Pinned, not just branch: wrynose, because this repo carries a patch --
+  # pin before the un-skipped run that applies it, not after. Same pin
+  # meta-angstrom uses.
+  meta-browser:
+    url: https://github.com/OSSystems/meta-browser
+    branch: null
+    commit: 5357a557bcd35adcde1d795682c56dcce41dee32
+    layers:
+      meta-chromium:
+    patches:
+      chromium-ozone-wayland-build-host-portability-fixes:
+        repo: meta-trmnl
+        path: patches/meta-browser/0001-chromium-ozone-wayland-build-host-portability-fixes.patch
+
+  meta-trmnl:

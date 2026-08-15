@@ -1,0 +1,19 @@
+[Unit]
+Description=Run the %i containers from /usr/share/trmnl/compose/%i
+After=local-fs.target
+# Deliberately NO After=/Requires=podman.service -- podman is daemonless.
+# Ordering against the OCI imports is a per-app drop-in written by the
+# image recipe, which is the only thing that knows TRMNL_OCI_APPS.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=0
+WorkingDirectory=/usr/share/trmnl/compose/%i
+Environment=TMPDIR=/var/lib/containers/tmp
+ExecStartPre=/bin/mkdir -p /var/lib/containers/tmp
+ExecStart=/usr/bin/trmnl-compose.sh %i up
+ExecStop=/usr/bin/trmnl-compose.sh %i down
+
+[Install]
+WantedBy=multi-user.target

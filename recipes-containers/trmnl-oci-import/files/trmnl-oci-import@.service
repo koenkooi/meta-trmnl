@@ -1,0 +1,26 @@
+[Unit]
+Description=Import the bundled %i OCI image into podman
+After=local-fs.target
+# Deliberately NO After=/Requires=podman.service -- podman is daemonless.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Bounded, not 0: a stall must fail visibly instead of hanging forever.
+# 1800s is ~6x the largest observed full run (~4.5 min for all 4 imports).
+TimeoutStartSec=1800
+# Per-instance TMPDIR: the two ~330MB imports used to share one directory
+# that nothing cleaned, leaking a full unpacked copy per killed pull.
+Environment=TMPDIR=/var/lib/containers/tmp/%i
+# trmnl-oci-import dir is the sha256 stamp + persistent log location (see
+# the script) -- create it here so the script never has to care whether
+# it exists on a first boot.
+ExecStartPre=/bin/mkdir -p /var/lib/containers/tmp/%i /var/lib/containers/trmnl-oci-import
+ExecStart=/usr/bin/trmnl-oci-import.sh %i
+# Free per-boot evidence for the memory-pressure hypothesis: peak mem/IO
+# land in the unit's own completion line, no extra instrumentation needed.
+MemoryAccounting=yes
+IOAccounting=yes
+
+[Install]
+WantedBy=multi-user.target

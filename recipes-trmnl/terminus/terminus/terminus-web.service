@@ -1,0 +1,17 @@
+[Unit]
+Description=Terminus web (Puma)
+After=network.target postgresql.service valkey.service
+Wants=postgresql.service valkey.service
+
+[Service]
+Type=simple
+User=terminus
+Group=terminus
+WorkingDirectory=/usr/lib/terminus/app
+EnvironmentFile=/etc/terminus/terminus.env
+ExecStart=/usr/bin/bundle exec puma --config ./config/puma.rb
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

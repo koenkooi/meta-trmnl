@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/siemens/kas/master/kas/schema-kas.json
+#
+# Opt-in: deploy meta-trmnl's container images with compose instead of
+# Quadlet. Usage (standalone, unlike meta-angstrom's build path):
+#
+#   kas-container --skip <checkout-steps> build kas/trmnl.yml:kas/trmnl-compose.yml
+#
+# then bitbake terminus-container-image or inker-container-image as usual.
+#
+# Duplicated verbatim from meta-angstrom/kas/trmnl-compose.yml, not
+# included from it: kas requires every colon-concatenated config on one
+# command line to share a single git root, and kas/trmnl.yml is
+# deliberately standalone (bitbake + oe-core + meta-virtualization +
+# meta-trmnl only, distro: nodistro) so yocto-check-layer can run against
+# this layer on its own -- it cannot reference a fragment living in
+# meta-angstrom. Keep the local_conf_header body below identical to the
+# other copy.
+
+header:
+  version: 14
+
+local_conf_header:
+  trmnl-compose-deploy: |
+    # "docker": terminus/inker-container-image install
+    # {terminus,inker}-compose-deploy (which pulls in podman-compose) and
+    # enable trmnl-compose@<app>.service. Their Quadlet .container units
+    # are still installed, but written without an [Install] section, so
+    # nothing starts them at boot -- both paths run the same containers on
+    # the host network against the same named volumes, so exactly one of
+    # them may be active. See meta-trmnl/TODO.md.
+    #
+    # "podman" (the default, from
+    # recipes-containers/trmnl-compose-deploy/trmnl-deploy-method.inc):
+    # today's Quadlet-only behaviour, unchanged. The compose files are
+    # written to /usr/share/trmnl/compose/<app>/compose.yml either way.
+    TRMNL_DEPLOY_METHOD = "docker"

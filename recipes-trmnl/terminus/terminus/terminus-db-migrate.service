@@ -1,0 +1,22 @@
+[Unit]
+Description=Run Terminus database migrations and seeds
+After=terminus-db-create.service
+Requires=terminus-db-create.service
+Before=terminus-web.service terminus-worker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=terminus
+Group=terminus
+WorkingDirectory=/usr/lib/terminus/app
+EnvironmentFile=/etc/terminus/terminus.env
+# --no-dump: hanami-cli's db/migrate.rb defaults to dump:true, which rewrites
+# config/db/structure.sql -- root-owned here, so the dump fails the unit even
+# though the migrations applied. Seeding is the step upstream's own
+# `hanami db prepare` runs after migrating; rodauth needs its user_status rows.
+ExecStart=/usr/bin/bundle exec hanami db migrate --no-dump
+ExecStart=/usr/bin/bundle exec hanami db seed
+
+[Install]
+WantedBy=multi-user.target

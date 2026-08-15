@@ -1,0 +1,14 @@
+[Unit]
+Description=Initialize the PostgreSQL data directory for Terminus
+Before=postgresql.service
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/terminus-db-init.sh
+
+[Install]
+WantedBy=postgresql.service

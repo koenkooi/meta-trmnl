@@ -1,0 +1,13 @@
+[Unit]
+Description=Create the terminus PostgreSQL role and database
+After=postgresql.service
+Requires=postgresql.service
+Before=terminus-web.service terminus-worker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/terminus-db-create.sh
+
+[Install]
+WantedBy=multi-user.target

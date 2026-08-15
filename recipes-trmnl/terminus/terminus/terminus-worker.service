@@ -1,0 +1,17 @@
+[Unit]
+Description=Terminus worker (Sidekiq)
+After=network.target postgresql.service valkey.service terminus-web.service
+Wants=postgresql.service valkey.service
+
+[Service]
+Type=simple
+User=terminus
+Group=terminus
+WorkingDirectory=/usr/lib/terminus/app
+EnvironmentFile=/etc/terminus/terminus.env
+ExecStart=/usr/bin/bundle exec sidekiq -r ./config/sidekiq.rb
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

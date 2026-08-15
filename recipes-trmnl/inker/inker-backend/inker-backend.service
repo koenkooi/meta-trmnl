@@ -1,0 +1,20 @@
+[Unit]
+Description=Inker backend (NestJS API + device endpoints)
+After=network.target
+
+[Service]
+Type=simple
+User=inker
+Group=inker
+WorkingDirectory=/usr/lib/inker-backend/app
+EnvironmentFile=/etc/inker/inker-backend.env
+StateDirectory=inker
+ExecStartPre=-/bin/mkdir -p /var/lib/inker/uploads/screens /var/lib/inker/uploads/firmware /var/lib/inker/uploads/widgets /var/lib/inker/uploads/captures /var/lib/inker/uploads/drawings /var/lib/inker/logs
+ExecStartPre=-/usr/bin/node ./node_modules/prisma/build/index.js db push --skip-generate
+ExecStartPre=-/usr/bin/node ./prisma/seed.js
+ExecStart=/usr/bin/node dist/main.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

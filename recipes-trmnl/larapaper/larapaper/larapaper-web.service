@@ -1,0 +1,30 @@
+[Unit]
+Description=LaraPaper web (php artisan serve)
+After=network.target
+
+[Service]
+Type=simple
+User=larapaper
+Group=larapaper
+WorkingDirectory=/usr/lib/larapaper/app
+Environment=PHP_INI_SCAN_DIR=/etc/larapaper/php.d
+EnvironmentFile=/etc/larapaper/larapaper.env
+# App tree is read-only; storage/framework, storage/logs, bootstrap/cache
+# and the sqlite DB all live under this instead (symlinked in at install
+# time -- see larapaper_0.1.bb do_install).
+StateDirectory=larapaper
+# StateDirectory only creates /var/lib/larapaper itself, not the
+# subdirectories the do_install symlinks (storage/framework,
+# storage/logs, bootstrap/cache) point into -- Laravel doesn't
+# auto-create bootstrap/cache on its own either.
+ExecStartPre=/usr/bin/mkdir -p /var/lib/larapaper/framework/cache/data \
+    /var/lib/larapaper/framework/sessions /var/lib/larapaper/framework/views \
+    /var/lib/larapaper/logs /var/lib/larapaper/bootstrap-cache
+ExecStartPre=/usr/bin/touch /var/lib/larapaper/database.sqlite
+ExecStartPre=/usr/bin/php artisan migrate --force
+ExecStart=/usr/bin/php artisan serve --host=0.0.0.0 --port=8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

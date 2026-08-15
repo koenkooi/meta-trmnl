@@ -1,0 +1,73 @@
+From ed08620476dfc343f92f59b7c159391c07af1c61 Mon Sep 17 00:00:00 2001
+From: Koen Kooi <koen@dominion.thruhere.net>
+Date: Sat, 15 Aug 2026 15:48:25 +0200
+Subject: [PATCH] config/db/seeds.rb: seed a baseline "og_plus" Model row
+
+Upstream removed local model seeding (4321bceb, "No longer necessary
+now that we can delegate to the model poller and synchronizer") --
+that poller/synchronizer syncs model definitions from trmnl.com's own
+hosted API. This qemu boot-test environment has no route to that API,
+so without at least one Model row, POST /api/setup's device
+provisioning always fails here: Devices::Provisioner#create looks up
+model_id via Repositories::Model#find_by(name:), and device.model_id
+has been NOT NULL since migration 20260126141642, so a nil lookup is a
+hard NotNullConstraintError, not a soft default.
+
+Name is "og_plus", not "og": Aspects::Firmware::Headers::Transformers::
+ModelName remaps every real device's HTTP_MODEL header ("og" included,
+and any unrecognized name too, via its own fallback) to one of a small
+canonical set before the lookup ever runs -- "og" maps to "og_plus",
+so a row literally named "og" is never actually matched by any real
+request. Confirmed live: seeding "og" left the Model row genuinely
+present in postgres but /api/setup still 404s with a model_id NOT NULL
+violation, because the app looks up "og_plus", not "og".
+
+A real deployment with real internet access can still let the poller
+sync/replace this later (find_or_create only inserts if "og_plus"
+doesn't already exist); this seed just keeps first boot testable
+without depending on that sync. 800x480 is the real TRMNL OG e-ink
+resolution.
+
+Upstream-Status: Inappropriate [oe-specific -- this qemu boot-test
+environment has no route to trmnl.com's model poller/synchronizer that
+upstream now relies on instead of a local seed]
+
+Signed-off-by: Koen Kooi <koen@dominion.thruhere.net>
+---
+ config/db/seeds.rb | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/config/db/seeds.rb b/config/db/seeds.rb
+index 972ed098..23a8ad36 100644
+--- a/config/db/seeds.rb
++++ b/config/db/seeds.rb
+@@ -8,3 +8,29 @@ Hanami.app["db.gateway"]
+         {id: 2, name: "Verified"},
+         {id: 3, name: "Closed"}
+       ]
++
++# Upstream removed local model seeding (4321bceb, "No longer necessary
++# now that we can delegate to the model poller and synchronizer") --
++# that poller/synchronizer syncs model definitions from trmnl.com's own
++# hosted API. This qemu boot-test environment has no route to that API,
++# so without at least one Model row, POST /api/setup's device
++# provisioning always fails here: Devices::Provisioner#create looks up
++# model_id via Repositories::Model#find_by(name:), and `device.model_id`
++# has been NOT NULL since migration 20260126141642, so a nil lookup is a
++# hard NotNullConstraintError, not a soft default. Name is "og_plus", not
++# "og": Aspects::Firmware::Headers::Transformers::ModelName remaps every
++# real device's HTTP_MODEL header ("og" included, and any unrecognized
++# name too, via its own fallback) to one of a small canonical set before
++# the lookup ever runs -- "og" maps to "og_plus", so a row literally named
++# "og" is never actually matched by any real request. A real deployment
++# with real internet access can still let the poller sync/replace this
++# later (find_or_create only inserts if "og_plus" doesn't already exist);
++# this seed just keeps first boot testable without depending on that
++# sync. 800x480 is the real TRMNL OG e-ink resolution.
++Hanami.app["repositories.model"].find_or_create(
++  name: "og_plus",
++  label: "OG",
++  description: "The original TRMNL e-ink display.",
++  width: 800,
++  height: 480
++)
